@@ -167,3 +167,54 @@ def person_card(n,blocks,W,H,path,pose="point",person_h=0.55,x_frac=0.6,seed=1,t
     for b,f,L,lh,y0 in lay:
         for l in L: d.text((m,y0),l,font=f,fill=t.get(b.get("color","fg"),b.get("color","fg"))); y0+=lh
     im.alpha_composite(pc,(px,py)); im.convert("RGB").save(path,quality=92); return path
+
+# --- Original techno track (used for Modern Nexus reels) ---
+def techno(path,dur=30.0,bpm=126,root=45,seed=3):
+    """Original four-on-the-floor techno: kick, offbeat hats, claps, rolling 16th bass, chord stabs, filter build."""
+    g=np.random.default_rng(seed); N=int(SR*dur); L=np.zeros(N); R=np.zeros(N); T=np.arange(N)/SR
+    bt=60/bpm; st=bt/4
+    def add(sig,start,pan=0.0,vol=1.0):
+        i=int(start*SR); j=min(N,i+len(sig))
+        if i>=N: return
+        L[i:j]+=sig[:j-i]*vol*(1-pan)/1; R[i:j]+=sig[:j-i]*vol*(1+pan)/1
+    tk=np.arange(int(.35*SR))/SR
+    kick=np.sin(2*np.pi*(45+120*np.exp(-tk*35))*tk)*np.exp(-tk*9); kick+=0.3*np.sin(2*np.pi*3000*tk)*np.exp(-tk*400)
+    th=np.arange(int(.06*SR))/SR; hat=g.normal(0,1,len(th)); hat=np.diff(np.concatenate([[0],hat]))*np.exp(-th*60)
+    ohat=g.normal(0,1,int(.18*SR)); ohat=np.diff(np.concatenate([[0],ohat]))*np.exp(-np.arange(len(ohat))/SR*18)
+    tc=np.arange(int(.2*SR))/SR; clap=g.normal(0,1,len(tc))*(np.exp(-tc*30)+0.6*np.exp(-np.maximum(tc-.012,0)*30)*(tc>.012))
+    prog=[0,0,-4,-2]  # i, i, VI, VII feel in minor
+    nb=int(dur/bt)
+    for b in range(nb):
+        t0=b*bt; bar=b//4; sec=bar//4  # 4-bar sections
+        intro = bar<2
+        add(kick,t0,vol=0.9 if not intro else 0.6)
+        if not intro: add(ohat,t0+bt/2,pan=0.25,vol=0.18)
+        add(hat,t0+bt/4,pan=-0.3,vol=0.08); add(hat,t0+3*bt/4,pan=0.3,vol=0.08)
+        if b%2==1 and bar>=1: add(clap,t0,vol=0.22)
+        # rolling bass 16ths (skip the downbeat for groove)
+        off=prog[bar%4]
+        for k in range(4):
+            if k==0: continue
+            ts=np.arange(int(st*SR*.9))/SR; f=note(root+off-12+(12 if k==2 else 0))
+            saw=2*((ts*f)%1)-1; env=np.exp(-ts*14)
+            cut=0.35+0.6*min(1,(t0)/dur)  # filter opens over time
+            sig=np.convolve(saw*env,np.ones(int(6/cut))/int(6/cut),mode="same")
+            add(sig,t0+k*st,vol=0.28)
+        # chord stab on the "and" of beat 3 every bar
+        if b%4==2 and not intro:
+            ts=np.arange(int(.22*SR))/SR; ch=[root+off+12,root+off+15,root+off+19]
+            stab=sum((2*((ts*note(c))%1)-1) for c in ch)/3*np.exp(-ts*12)
+            stab=np.convolve(stab,np.ones(8)/8,mode="same")
+            add(stab,t0+bt/2,pan=0.15,vol=0.16); add(stab*0.5,t0+bt/2+bt*0.75,pan=-0.3,vol=0.12)  # echo
+    # riser into the last section
+    rs=max(0,dur-8.5); n=int(4*SR); tr=np.arange(n)/SR
+    if rs>0: add(g.normal(0,1,n)*(tr/4)**2*0.12,rs-4)
+    fade=np.minimum(1,np.minimum(T/0.6,(dur-T)/1.8)); L*=fade; R*=fade
+    m=max(np.max(np.abs(L)),np.max(np.abs(R)))*1.12; L/=m; R/=m
+    s=(np.stack([L,R],1)*32767).astype(np.int16)
+    with wave.open(path,"wb") as w: w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes(s.tobytes())
+
+def make_techno(dur=31.0):
+    p=O+f"m_techno_{int(dur)}.wav"
+    if not os.path.exists(p): techno(p,dur=dur)
+    return p
